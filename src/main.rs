@@ -10,7 +10,8 @@ use std::collections::HashMap;
 use mongodb::{
     bson::{self, doc, Document},
     options::FindOptions,
-    options::{FindOneAndReplaceOptions, FindOneOptions},
+    options::{FindOneOptions},
+    options::FindOneAndDeleteOptions,
     Client,
 };
 use rocket::{fs::FileServer, http::Status, response::content};
@@ -69,7 +70,7 @@ async fn user(uid: String) -> content::RawJson<std::string::String> {
     let client = get_mongo_client().await;
     let db = client.database("users");
     let collection = db.collection::<Document>("users");
-    let filter = doc! { "uid": uid };
+    let filter = doc! { "UID": uid };
     let options = FindOneOptions::builder().build();
     let cursor = collection.find_one(filter, options).await.unwrap();
     let cuser = cursor.unwrap();
@@ -114,36 +115,36 @@ async fn userexists(uid: String) -> content::RawJson<std::string::String> {
     let client = get_mongo_client().await;
     let db = client.database("users");
     let collection = db.collection::<Document>("users");
-    let filter = doc! { "uid": uid };
+    let filter = doc! { "UID": uid };
     let options = FindOneOptions::builder().build();
     let cursor = collection.find_one(filter, options).await.unwrap();
     let json_form = serde_json::to_string(&cursor).unwrap();
     content::RawJson((json_form != "null").to_string())
 }
 
-#[patch("/user/<pword>", format = "application/json", data = "<user>")]
-/// It takes a JSON string, converts it to a BSON document, and then replaces the document in the
-/// database with the same uid
+
+#[delete("/deleteuser/<uid>/<pword>")]
+/// It takes a user id and a password, connects to the database, finds the user with that id, and
+/// deletes the user
 ///
 /// Arguments:
 ///
-/// * `user`: The user object to be updated.
-async fn updateuser(user: String, pword: String) -> Status {
+/// * `uid`: The user's unique ID.
+/// * `pword`: The user's password.
+///
+/// Returns:
+/// * Status
+async fn deleteuser(uid: String, pword: String) -> Status {
     if pword != api_password() {
         return Status::Unauthorized;
     }
     let client = get_mongo_client().await;
     let db = client.database("users");
     let collection = db.collection::<Document>("users");
-    let v: Value = serde_json::from_str(&user).unwrap();
-    let doc = match bson::to_bson(&v) {
-        Ok(bson::Bson::Document(doc)) => doc,
-        _ => panic!("Error converting to BSON"),
-    };
-    let filter = doc! { "uid": v["uid"].as_str().unwrap() };
-    let options = FindOneAndReplaceOptions::builder().build();
+    let filter = doc! { "UID": uid };
+    let options = FindOneAndDeleteOptions::builder().build();
     collection
-        .find_one_and_replace(filter, doc, options)
+        .find_one_and_delete(filter, options)
         .await
         .unwrap();
     Status::Ok
@@ -155,7 +156,7 @@ fn rocket() -> _ {
         .mount("/", FileServer::from("src/site/dist"))
         .mount(
             "/api/v1",
-            routes![users, user, create_user, userexists, updateuser],
+            routes![users, user, create_user, deleteuser, userexists],
         )
 }
 
