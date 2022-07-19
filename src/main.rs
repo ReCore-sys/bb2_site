@@ -9,11 +9,11 @@ use std::collections::HashMap;
 
 use mongodb::{
     bson::{self, doc, Document},
-    options::FindOneOptions,
     options::FindOptions,
+    options::{FindOneAndReplaceOptions, FindOneOptions},
     Client,
 };
-use rocket::{fs::FileServer, response::content};
+use rocket::{fs::FileServer, http::Status, response::content};
 
 #[derive(Debug, Serialize, Deserialize)]
 struct User {
@@ -77,13 +77,16 @@ async fn user(uid: String) -> content::RawJson<std::string::String> {
     content::RawJson(json_form)
 }
 
-#[post("/user", format = "application/json", data = "<user>")]
+#[post("/user/<pword>", format = "application/json", data = "<user>")]
 /// It takes a JSON string, converts it to a BSON document, and inserts it into the database
 ///
 /// Arguments:
 ///
 /// * `user`: The user's username
-async fn create_user(user: String) {
+async fn create_user(user: String, pword: String) -> Status {
+    if pword != api_password() {
+        return Status::Unauthorized;
+    }
     let client = get_mongo_client().await;
     let db = client.database("users");
     let collection = db.collection::<Document>("users");
@@ -93,13 +96,67 @@ async fn create_user(user: String) {
         _ => panic!("Error converting to BSON"),
     };
     collection.insert_one(doc, None).await.unwrap();
+    Status::Ok
+}
+
+#[get("/userexists/<uid>")]
+/// It takes a user id, connects to the database, finds the user with that id, and returns a boolean
+/// indicating whether or not the user exists
+///
+/// Arguments:
+///
+/// * `uid`: The user's unique ID.
+///
+/// Returns:
+///
+/// A boolean indicating whether or not the user exists.
+async fn userexists(uid: String) -> content::RawJson<std::string::String> {
+    let client = get_mongo_client().await;
+    let db = client.database("users");
+    let collection = db.collection::<Document>("users");
+    let filter = doc! { "uid": uid };
+    let options = FindOneOptions::builder().build();
+    let cursor = collection.find_one(filter, options).await.unwrap();
+    let json_form = serde_json::to_string(&cursor).unwrap();
+    content::RawJson((json_form != "null").to_string())
+}
+
+#[patch("/user/<pword>", format = "application/json", data = "<user>")]
+/// It takes a JSON string, converts it to a BSON document, and then replaces the document in the
+/// database with the same uid
+///
+/// Arguments:
+///
+/// * `user`: The user object to be updated.
+async fn updateuser(user: String, pword: String) -> Status {
+    if pword != api_password() {
+        return Status::Unauthorized;
+    }
+    let client = get_mongo_client().await;
+    let db = client.database("users");
+    let collection = db.collection::<Document>("users");
+    let v: Value = serde_json::from_str(&user).unwrap();
+    let doc = match bson::to_bson(&v) {
+        Ok(bson::Bson::Document(doc)) => doc,
+        _ => panic!("Error converting to BSON"),
+    };
+    let filter = doc! { "uid": v["uid"].as_str().unwrap() };
+    let options = FindOneAndReplaceOptions::builder().build();
+    collection
+        .find_one_and_replace(filter, doc, options)
+        .await
+        .unwrap();
+    Status::Ok
 }
 
 #[launch]
 fn rocket() -> _ {
     rocket::build()
         .mount("/", FileServer::from("src/site/dist"))
-        .mount("/api/v1", routes![users, user, create_user])
+        .mount(
+            "/api/v1",
+            routes![users, user, create_user, userexists, updateuser],
+        )
 }
 
 async fn get_mongo_client() -> Client {
@@ -123,4 +180,14 @@ async fn get_mongo_client() -> Client {
     .await
     .expect("Connection failed");
     client
+}
+
+fn api_password() -> String {
+    let filecontent = std::fs::read_to_string("config.yaml").unwrap();
+    let docs = YamlLoader::load_from_str(filecontent.as_str()).unwrap();
+
+    // Multi document support, doc is a yaml::Yaml
+    let doc = &docs[0];
+
+    doc["api_password"].as_str().unwrap().to_string()
 }

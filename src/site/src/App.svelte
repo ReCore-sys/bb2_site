@@ -21,6 +21,7 @@
     async function GetConfig() {
         const response = await get("/api/config/");
         const data = await response.data;
+        return data;
     }
 
     async function GetUsers() {
@@ -34,9 +35,9 @@
 </script>
 
 <main>
-    {#if view == "main"}
+    {#if view === "main"}
         <h1>Bottombot, a verified crime</h1>
-        {#if users != 0}
+        {#if users !== 0}
             <Counter
                 values={counters}
                 duration="1000"
@@ -49,7 +50,7 @@
             <Feedback bind:view />
         {/if}
     {/if}
-    {#if view == "thanks"}
+    {#if view === "thanks"}
         <Thanks bind:view />
     {/if}
 </main>
